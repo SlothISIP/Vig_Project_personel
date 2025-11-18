@@ -1,0 +1,55 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: digital-twin-factory
+  labels:
+    app: backend
+data:
+  # API Configuration
+  API_VERSION: "v1"
+  API_PREFIX: "/api/v1"
+  CORS_ORIGINS: "*"
+  LOG_LEVEL: "INFO"
+
+  # Database (if using external DB)
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "digital_twin"
+
+  # Redis (if using for caching)
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+
+  # Model paths
+  MODEL_DIR: "/app/models"
+  CHECKPOINT_DIR: "/app/checkpoints"
+  DATA_DIR: "/app/data"
+
+  # Digital Twin Simulation
+  SIMULATION_TIMESTEP: "5"
+  MAX_MACHINES: "10"
+
+  # Predictive Maintenance
+  PREDICTION_INTERVAL: "300"
+  MAINTENANCE_THRESHOLD: "0.7"
+
+  # RL Scheduling
+  RL_ENABLED: "true"
+  RL_FALLBACK: "true"
+  RL_MODEL_PATH: "/app/checkpoints/rl_scheduling/latest"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: digital-twin-factory
+  labels:
+    app: frontend
+data:
+  # Frontend configuration (injected at runtime)
+  VITE_API_URL: "http://backend-service:8000/api/v1"
+  VITE_WS_URL: "ws://backend-service:8000/ws"
+  VITE_APP_TITLE: "Digital Twin Factory Dashboard"
