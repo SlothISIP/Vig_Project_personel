@@ -5,10 +5,12 @@ React + TypeScript dashboard for real-time factory monitoring.
 ## Features
 
 - **Real-time Monitoring**: WebSocket-based live updates
-- **Digital Twin Visualization**: Machine status and factory state
+- **3D Digital Twin Visualization**: Interactive 3D factory scene with real-time updates
+- **2D Dashboard**: Traditional dashboard with charts and metrics
 - **Predictive Maintenance**: ML-based maintenance recommendations
 - **Production Scheduling**: Interactive schedule timeline
 - **Responsive Design**: Tailwind CSS with mobile support
+- **Split View Mode**: Combine 3D and 2D views simultaneously
 
 ## Tech Stack
 
@@ -16,6 +18,9 @@ React + TypeScript dashboard for real-time factory monitoring.
 - **TypeScript** - Type safety
 - **Vite** - Build tool
 - **Tailwind CSS** - Styling
+- **Three.js** - 3D graphics engine
+- **React Three Fiber** - React renderer for Three.js
+- **React Three Drei** - Useful helpers for R3F
 - **Axios** - HTTP client
 - **Recharts** - Data visualization
 - **Lucide React** - Icons
@@ -56,13 +61,16 @@ frontend/
 ├── src/
 │   ├── components/         # React components
 │   │   ├── Dashboard/     # Dashboard views
-│   │   ├── DigitalTwin/   # Digital twin components
+│   │   ├── DigitalTwin/   # Digital twin 2D components
+│   │   ├── DigitalTwin3D/ # 3D visualization components
 │   │   ├── Predictive/    # Predictive maintenance
 │   │   ├── Scheduling/    # Scheduling components
 │   │   └── common/        # Reusable UI components
 │   ├── services/          # API clients and WebSocket
 │   ├── types/             # TypeScript type definitions
 │   ├── utils/             # Helper functions
+│   │   ├── three/         # Three.js utilities
+│   │   └── helpers.ts     # General helpers
 │   ├── App.tsx            # Main app component
 │   └── main.tsx           # Entry point
 ├── public/                # Static assets
