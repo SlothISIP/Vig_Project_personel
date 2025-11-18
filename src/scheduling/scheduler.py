@@ -47,6 +47,9 @@ class ProductionScheduler:
         # Current schedule
         self.current_schedule: Optional[Schedule] = None
 
+        # Schedule history for tracking multiple schedules
+        self.schedule_history: List[Schedule] = []
+
         logger.info(
             f"Production scheduler initialized with {len(machines)} machines"
         )
@@ -74,6 +77,9 @@ class ProductionScheduler:
         if schedule:
             # Store as current schedule
             self.current_schedule = schedule
+
+            # Add to history
+            self.schedule_history.append(schedule)
 
             # Evaluate
             metrics = self.optimizer.evaluate_schedule(schedule, self.machines)
@@ -135,6 +141,47 @@ class ProductionScheduler:
     def get_current_schedule(self) -> Optional[Schedule]:
         """Get current schedule."""
         return self.current_schedule
+
+    def get_all_schedules(self) -> List[Dict[str, any]]:
+        """
+        Get all schedules in history.
+
+        Returns:
+            List of schedule dictionaries with metadata
+        """
+        schedules = []
+
+        for schedule in self.schedule_history:
+            schedule_dict = {
+                "schedule_id": schedule.schedule_id,
+                "created_at": schedule.created_at.isoformat(),
+                "makespan": schedule.makespan,
+                "utilization": schedule.utilization if hasattr(schedule, 'utilization') else 0.0,
+                "jobs": [
+                    {
+                        "job_id": job.job_id,
+                        "priority": job.priority,
+                        "duration": job.duration if hasattr(job, 'duration') else 0,
+                        "deadline": job.deadline.isoformat() if hasattr(job, 'deadline') and job.deadline else None,
+                        "status": getattr(job, 'status', 'pending'),
+                        "is_overdue": getattr(job, 'is_overdue', False),
+                    }
+                    for job in schedule.jobs
+                ],
+                "assignments": [
+                    {
+                        "task_id": a.task_id,
+                        "job_id": a.job_id,
+                        "machine_id": a.machine_id,
+                        "start_time": a.start_time.isoformat(),
+                        "end_time": a.end_time.isoformat(),
+                    }
+                    for a in schedule.assignments
+                ],
+            }
+            schedules.append(schedule_dict)
+
+        return schedules
 
     def get_machine_status(self, machine_id: str) -> Dict[str, any]:
         """

@@ -187,3 +187,146 @@ class FactoryState:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+
+class MachineStateManager:
+    """
+    Machine State Manager for API integration.
+
+    Provides a simplified interface for managing machine states
+    with support for dynamic properties (temperature, vibration, etc.)
+    """
+
+    def __init__(self, factory_id: str = "Factory_01"):
+        """Initialize machine state manager."""
+        self.factory_state = FactoryState(factory_id=factory_id)
+        self._machine_properties: Dict[str, Dict[str, Any]] = {}
+
+    def add_machine(
+        self,
+        machine_id: str,
+        machine_type: str,
+        initial_state: str = "idle",
+    ) -> None:
+        """
+        Add a new machine to the factory.
+
+        Args:
+            machine_id: Unique machine identifier
+            machine_type: Type/model of machine
+            initial_state: Initial operating state
+        """
+        # Map string state to MachineStatus enum
+        status_map = {
+            "idle": MachineStatus.IDLE,
+            "running": MachineStatus.RUNNING,
+            "warning": MachineStatus.WARNING,
+            "error": MachineStatus.ERROR,
+            "maintenance": MachineStatus.MAINTENANCE,
+            "offline": MachineStatus.OFFLINE,
+        }
+
+        status = status_map.get(initial_state.lower(), MachineStatus.IDLE)
+
+        machine = MachineState(
+            machine_id=machine_id,
+            machine_type=machine_type,
+            status=status,
+        )
+
+        self.factory_state.add_machine(machine)
+
+        # Initialize dynamic properties
+        self._machine_properties[machine_id] = {
+            "temperature": 70.0,  # Default temperature
+            "vibration": 2.0,     # Default vibration
+            "pressure": 90.0,     # Default pressure
+            "speed": 1000.0,      # Default speed
+            "defect_rate": 0.0,
+            "state": initial_state,
+        }
+
+    def get_machine_state(self, machine_id: str):
+        """
+        Get machine state with dynamic properties.
+
+        Returns a state object with both MachineState attributes
+        and dynamic properties (temperature, vibration, etc.)
+        """
+        machine = self.factory_state.get_machine(machine_id)
+        if not machine:
+            return None
+
+        # Create a wrapper object with all properties
+        class MachineStateWrapper:
+            def __init__(self, machine_state, properties):
+                self._machine_state = machine_state
+                self._properties = properties
+
+            def __getattr__(self, name):
+                # First try to get from machine_state
+                if hasattr(self._machine_state, name):
+                    return getattr(self._machine_state, name)
+                # Then try properties
+                if name in self._properties:
+                    return self._properties[name]
+                # Special mapping for 'state' attribute
+                if name == 'state':
+                    return self._properties.get('state', self._machine_state.status.value)
+                raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+            def __setattr__(self, name, value):
+                if name.startswith('_'):
+                    super().__setattr__(name, value)
+                elif hasattr(self._machine_state, name):
+                    setattr(self._machine_state, name, value)
+                else:
+                    self._properties[name] = value
+
+        props = self._machine_properties.get(machine_id, {})
+        return MachineStateWrapper(machine, props)
+
+    def get_all_machines(self) -> Dict[str, Any]:
+        """Get all machines with their states."""
+        result = {}
+        for machine_id in self.factory_state.machines.keys():
+            result[machine_id] = self.get_machine_state(machine_id)
+        return result
+
+    def update_machine_state(
+        self,
+        machine_id: str,
+        **kwargs
+    ) -> None:
+        """
+        Update machine state properties.
+
+        Args:
+            machine_id: Machine to update
+            **kwargs: Properties to update (temperature, vibration, state, etc.)
+        """
+        machine = self.factory_state.get_machine(machine_id)
+        if not machine:
+            return
+
+        # Update MachineState properties
+        if 'state' in kwargs or 'status' in kwargs:
+            status_str = kwargs.get('state', kwargs.get('status', 'idle'))
+            status_map = {
+                "idle": MachineStatus.IDLE,
+                "running": MachineStatus.RUNNING,
+                "warning": MachineStatus.WARNING,
+                "error": MachineStatus.ERROR,
+                "maintenance": MachineStatus.MAINTENANCE,
+                "offline": MachineStatus.OFFLINE,
+            }
+            if isinstance(status_str, str):
+                machine.update_status(status_map.get(status_str.lower(), MachineStatus.IDLE))
+
+        # Update dynamic properties
+        if machine_id not in self._machine_properties:
+            self._machine_properties[machine_id] = {}
+
+        for key, value in kwargs.items():
+            if key not in ['state', 'status']:
+                self._machine_properties[machine_id][key] = value
