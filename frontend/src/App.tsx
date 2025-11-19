@@ -3,11 +3,9 @@ import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { Activity, Cpu, Wrench, Calendar, Home } from 'lucide-react';
 import { DashboardOverview } from '@/components/Dashboard/DashboardOverview';
 import { DigitalTwinPage } from '@/components/DigitalTwin';
+import { PredictivePage } from '@/components/Predictive';
+import { SchedulingPage } from '@/components/Scheduling';
 import { wsService } from '@/services/websocket';
-
-// Placeholder pages - will be implemented
-const PredictivePage = () => <div>Predictive Maintenance Page</div>;
-const SchedulingPage = () => <div>Scheduling Page</div>;
 
 function App() {
   useEffect(() => {

@@ -111,9 +111,19 @@ class ApiClient {
     return response.data;
   }
 
+  // Alias for PredictivePage compatibility
+  async getMaintenanceRecommendations(): Promise<MaintenanceRecommendation[]> {
+    return this.getAllMaintenanceRecommendations();
+  }
+
   // Scheduling
   async getCurrentSchedule(): Promise<Schedule> {
     const response = await this.client.get<Schedule>('/scheduling/current');
+    return response.data;
+  }
+
+  async getSchedules(): Promise<Schedule[]> {
+    const response = await this.client.get<Schedule[]>('/scheduling/schedules');
     return response.data;
   }
 

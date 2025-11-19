@@ -27,16 +27,16 @@ logger = get_logger(__name__)
 
 @dataclass
 class SolverConfig:
-    """Configuration for the scheduling solver."""
+    """Configuration for the scheduling solver (optimized for production)."""
 
-    max_time_seconds: int = 300  # Maximum solving time
-    num_search_workers: int = 4  # Parallel search workers
+    max_time_seconds: int = 10  # Maximum solving time (reduced from 300s for faster response)
+    num_search_workers: int = 4  # Parallel search workers (good balance for multi-core)
     optimize_makespan: bool = True  # Minimize makespan
     optimize_tardiness: bool = False  # Minimize tardiness
     optimize_utilization: bool = False  # Maximize utilization
 
     # Logging
-    log_search_progress: bool = False
+    log_search_progress: bool = False  # Disable for production performance
 
 
 class JobShopSolver:
