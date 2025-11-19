@@ -189,6 +189,41 @@ class FactoryState:
         }
 
 
+# Optimized MachineStateWrapper (moved outside for reuse)
+class MachineStateWrapper:
+    """Wrapper for machine state with dynamic properties (optimized)."""
+    __slots__ = ('_machine_state', '_properties')  # Memory optimization
+
+    def __init__(self, machine_state, properties):
+        object.__setattr__(self, '_machine_state', machine_state)
+        object.__setattr__(self, '_properties', properties)
+
+    def __getattr__(self, name):
+        # Try machine_state first
+        try:
+            return object.__getattribute__(self._machine_state, name)
+        except AttributeError:
+            pass
+
+        # Then try properties
+        if name in self._properties:
+            return self._properties[name]
+
+        # Special mapping for 'state'
+        if name == 'state':
+            return self._properties.get('state', self._machine_state.status.value)
+
+        raise AttributeError(f"MachineStateWrapper has no attribute '{name}'")
+
+    def __setattr__(self, name, value):
+        if name.startswith('_'):
+            object.__setattr__(self, name, value)
+        elif hasattr(self._machine_state, name):
+            setattr(self._machine_state, name, value)
+        else:
+            self._properties[name] = value
+
+
 class MachineStateManager:
     """
     Machine State Manager for API integration.
@@ -248,7 +283,7 @@ class MachineStateManager:
 
     def get_machine_state(self, machine_id: str):
         """
-        Get machine state with dynamic properties.
+        Get machine state with dynamic properties (optimized version).
 
         Returns a state object with both MachineState attributes
         and dynamic properties (temperature, vibration, etc.)
@@ -256,32 +291,6 @@ class MachineStateManager:
         machine = self.factory_state.get_machine(machine_id)
         if not machine:
             return None
-
-        # Create a wrapper object with all properties
-        class MachineStateWrapper:
-            def __init__(self, machine_state, properties):
-                self._machine_state = machine_state
-                self._properties = properties
-
-            def __getattr__(self, name):
-                # First try to get from machine_state
-                if hasattr(self._machine_state, name):
-                    return getattr(self._machine_state, name)
-                # Then try properties
-                if name in self._properties:
-                    return self._properties[name]
-                # Special mapping for 'state' attribute
-                if name == 'state':
-                    return self._properties.get('state', self._machine_state.status.value)
-                raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
-            def __setattr__(self, name, value):
-                if name.startswith('_'):
-                    super().__setattr__(name, value)
-                elif hasattr(self._machine_state, name):
-                    setattr(self._machine_state, name, value)
-                else:
-                    self._properties[name] = value
 
         props = self._machine_properties.get(machine_id, {})
         return MachineStateWrapper(machine, props)

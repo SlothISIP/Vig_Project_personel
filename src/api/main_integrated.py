@@ -54,6 +54,9 @@ predictive_system: Optional[PredictiveMaintenanceSystem] = None
 production_scheduler: Optional[ProductionScheduler] = None
 websocket_clients: List[WebSocket] = []
 
+# Shutdown event for graceful termination
+shutdown_event = asyncio.Event()
+
 
 # ============================================================================
 # Startup / Shutdown
@@ -135,19 +138,33 @@ async def startup_event():
 
     logger.info("✅ All services initialized successfully")
 
+    # 6. Start background tasks
+    asyncio.create_task(simulate_factory_updates())
+    logger.info("✓ Background tasks started")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
     logger.info("👋 Shutting down Digital Twin Factory System...")
 
-    # Close all WebSocket connections
+    # 1. Signal background tasks to stop
+    shutdown_event.set()
+    logger.info("✓ Shutdown signal sent to background tasks")
+
+    # 2. Wait a bit for tasks to finish
+    await asyncio.sleep(1)
+
+    # 3. Close all WebSocket connections
     for ws in websocket_clients:
         try:
             await ws.close()
         except:
             pass
     websocket_clients.clear()
+    logger.info("✓ WebSocket connections closed")
+
+    logger.info("✅ Shutdown complete")
 
 
 # ============================================================================
@@ -638,20 +655,32 @@ async def get_dashboard_stats():
 # WebSocket Endpoint (NEW)
 # ============================================================================
 
+async def safe_send(ws: WebSocket, message: dict):
+    """Safely send message to WebSocket client."""
+    try:
+        await ws.send_json(message)
+        return True
+    except Exception as e:
+        logger.warning(f"WebSocket send failed: {e}")
+        raise
+
+
 async def broadcast_update(message: dict):
-    """Broadcast update to all connected WebSocket clients."""
-    disconnected_clients = []
+    """Broadcast update to all connected WebSocket clients (parallel)."""
+    global websocket_clients
 
-    for ws in websocket_clients:
-        try:
-            await ws.send_json(message)
-        except Exception as e:
-            logger.warning(f"Failed to send to WebSocket client: {e}")
-            disconnected_clients.append(ws)
+    if not websocket_clients:
+        return
 
-    # Remove disconnected clients
-    for ws in disconnected_clients:
-        websocket_clients.remove(ws)
+    # Parallel broadcast using asyncio.gather
+    tasks = [safe_send(ws, message) for ws in websocket_clients]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Filter out disconnected clients (O(N) operation)
+    websocket_clients = [
+        ws for ws, result in zip(websocket_clients, results)
+        if not isinstance(result, Exception)
+    ]
 
 
 @app.websocket("/ws")
@@ -713,20 +742,22 @@ async def websocket_endpoint(websocket: WebSocket):
 # Background Tasks for Real-time Updates (NEW)
 # ============================================================================
 
-@app.on_event("startup")
-async def start_background_tasks():
-    """Start background tasks for simulation and updates."""
-    asyncio.create_task(simulate_factory_updates())
-
-
 async def simulate_factory_updates():
-    """Simulate factory updates and broadcast to WebSocket clients."""
+    """Simulate factory updates and broadcast to WebSocket clients with graceful shutdown."""
     await asyncio.sleep(5)  # Wait for startup to complete
 
     logger.info("Starting factory simulation updates...")
 
-    while True:
+    error_count = 0
+    MAX_ERRORS = 10
+
+    while not shutdown_event.is_set():
         try:
+            # Skip simulation if no clients connected (resource optimization)
+            if not websocket_clients:
+                await asyncio.sleep(2)
+                continue
+
             if machine_state_manager and factory_simulator:
                 # Run simulation step
                 factory_simulator.run_step()
@@ -765,12 +796,27 @@ async def simulate_factory_updates():
                     }
                 })
 
-            # Update every 2 seconds
+            # Reset error count on success
+            error_count = 0
+
+            # Update every 2 seconds (cancellation point)
             await asyncio.sleep(2)
 
+        except asyncio.CancelledError:
+            logger.info("Factory simulation cancelled")
+            break
         except Exception as e:
-            logger.error(f"Error in factory simulation: {e}")
+            error_count += 1
+            logger.error(f"Error in factory simulation ({error_count}/{MAX_ERRORS}): {e}")
+
+            # Stop if too many errors
+            if error_count >= MAX_ERRORS:
+                logger.error("Too many errors in simulation, stopping")
+                break
+
             await asyncio.sleep(5)
+
+    logger.info("Factory simulation stopped")
 
 
 # ============================================================================
