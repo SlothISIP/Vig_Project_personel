@@ -23,7 +23,12 @@ from src.scheduling.models import Job, Machine
 from src.core.config import get_settings
 from src.core.logging import setup_logging, get_logger
 from src.core.constants import ONNX_DIR
-from src.core.exceptions import ModelInferenceError
+from src.core.exceptions import (
+    ModelInferenceError,
+    DataValidationError,
+    DigitalTwinStateError,
+    SchedulingError,
+)
 
 # Setup logging
 setup_logging()
@@ -46,6 +51,101 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================================
+# Exception Handlers (Enhanced Error Handling)
+# ============================================================================
+
+@app.exception_handler(DataValidationError)
+async def validation_exception_handler(request, exc):
+    """Handle validation errors with 400 Bad Request."""
+    logger.warning(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "Validation Error",
+            "detail": str(exc),
+            "type": "validation_error"
+        }
+    )
+
+@app.exception_handler(DigitalTwinStateError)
+async def state_exception_handler(request, exc):
+    """Handle state errors with 409 Conflict."""
+    logger.error(f"State error: {exc}")
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": "State Error",
+            "detail": str(exc),
+            "type": "state_error"
+        }
+    )
+
+@app.exception_handler(SchedulingError)
+async def scheduling_exception_handler(request, exc):
+    """Handle scheduling errors with 422 Unprocessable Entity."""
+    logger.error(f"Scheduling error: {exc}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "Scheduling Error",
+            "detail": str(exc),
+            "type": "scheduling_error"
+        }
+    )
+
+@app.exception_handler(ModelInferenceError)
+async def model_exception_handler(request, exc):
+    """Handle model inference errors with 503 Service Unavailable."""
+    logger.error(f"Model inference error: {exc}")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "Model Inference Error",
+            "detail": str(exc),
+            "type": "model_error"
+        }
+    )
+
+@app.exception_handler(FileNotFoundError)
+async def file_not_found_handler(request, exc):
+    """Handle file not found errors with 404."""
+    logger.error(f"File not found: {exc}")
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Resource Not Found",
+            "detail": str(exc),
+            "type": "not_found"
+        }
+    )
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request, exc):
+    """Handle value errors with 400 Bad Request."""
+    logger.warning(f"Value error: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": "Invalid Input",
+            "detail": str(exc),
+            "type": "value_error"
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    """Handle all other exceptions with 500 Internal Server Error."""
+    logger.exception(f"Unexpected error: {exc}")  # Logs full stack trace
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "detail": "An unexpected error occurred. Please try again later.",
+            "type": "internal_error"
+        }
+    )
+
 # Global services
 inference_engine: Optional[ONNXInferenceEngine] = None
 machine_state_manager: Optional[MachineStateManager] = None
@@ -56,6 +156,10 @@ websocket_clients: List[WebSocket] = []
 
 # Shutdown event for graceful termination
 shutdown_event = asyncio.Event()
+
+# Dashboard stats cache (TTL-based)
+dashboard_cache: Dict[str, Any] = {}
+DASHBOARD_CACHE_TTL = 5  # 5 seconds TTL
 
 
 # ============================================================================
@@ -543,15 +647,49 @@ async def get_job_status(job_id: str):
 
 
 # ============================================================================
-# Dashboard Stats Endpoint (NEW)
+# Dashboard Stats Endpoint (NEW) - with TTL caching
 # ============================================================================
+
+def get_cache_key(prefix: str) -> str:
+    """Generate cache key with TTL bucket."""
+    current_bucket = int(datetime.now().timestamp() // DASHBOARD_CACHE_TTL)
+    return f"{prefix}:{current_bucket}"
+
+def cleanup_old_cache():
+    """Remove expired cache entries."""
+    current_time = datetime.now().timestamp()
+    keys_to_delete = []
+
+    for key in list(dashboard_cache.keys()):
+        if ':' in key:
+            try:
+                bucket = int(key.split(':')[1])
+                age = current_time - (bucket * DASHBOARD_CACHE_TTL)
+                if age > 60:  # Remove entries older than 1 minute
+                    keys_to_delete.append(key)
+            except (ValueError, IndexError):
+                pass
+
+    for key in keys_to_delete:
+        del dashboard_cache[key]
 
 @app.get("/api/v1/dashboard/stats")
 async def get_dashboard_stats():
-    """Get aggregated dashboard statistics from all services."""
+    """Get aggregated dashboard statistics from all services (with 5s cache)."""
+    global dashboard_cache
+
+    # Check cache
+    cache_key = get_cache_key("dashboard_stats")
+    if cache_key in dashboard_cache:
+        logger.debug("Dashboard stats: cache HIT")
+        return dashboard_cache[cache_key]
+
+    logger.debug("Dashboard stats: cache MISS, computing...")
+
     try:
         stats = {
             "timestamp": datetime.now().isoformat(),
+            "cached": False,  # Indicate this is fresh data
             "services_status": {
                 "vision_ai": inference_engine is not None,
                 "digital_twin": machine_state_manager is not None,
@@ -644,6 +782,13 @@ async def get_dashboard_stats():
                 stats["overall_oee"] = 0
         else:
             stats["overall_oee"] = 0
+
+        # Cache the result
+        dashboard_cache[cache_key] = stats
+        logger.debug(f"Dashboard stats cached with key: {cache_key}")
+
+        # Cleanup old cache entries
+        cleanup_old_cache()
 
         return stats
     except Exception as e:
