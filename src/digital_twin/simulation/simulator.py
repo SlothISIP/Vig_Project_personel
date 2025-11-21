@@ -145,12 +145,6 @@ class FactorySimulator:
                 continue
 
             # Simulate processing time
-            processing_time = max(
-                1.0,
-                self.env.timeout(
-                    station.processing_time_mean
-                ),  # Simplified for now
-            )
             yield self.env.timeout(station.processing_time_mean)
 
             # Complete processing

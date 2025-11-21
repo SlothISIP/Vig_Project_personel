@@ -206,13 +206,11 @@ async def startup_event():
 
     # 3. Factory Simulator
     try:
-        config = SimulationConfig(
-            num_machines=3,
-            num_production_lines=1,
-            simulation_duration=1000.0,
-            product_arrival_rate=10.0,
+        from src.digital_twin.simulation.simulator import create_factory_simulator
+        factory_simulator = create_factory_simulator(
+            num_lines=1,
+            simulation_hours=1000.0 / 3600  # Convert seconds to hours
         )
-        factory_simulator = FactorySimulator(config)
         logger.info("✓ Factory Simulator initialized")
     except Exception as e:
         logger.error(f"Failed to initialize simulator: {e}")
@@ -226,12 +224,13 @@ async def startup_event():
 
     # 5. Production Scheduler
     try:
+        from src.scheduling.models import MachineAvailability
         scheduler_machines = [
             Machine(
                 machine_id=f"M{i:03d}",
                 machine_type=f"Type_{i}",
                 capabilities=[f"op_{i}"],
-                available=True
+                availability=MachineAvailability.AVAILABLE
             )
             for i in range(1, 4)
         ]
