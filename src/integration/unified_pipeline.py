@@ -279,8 +279,9 @@ class UnifiedPipeline:
             # Episode reset
             if terminated or truncated:
                 self.state.rl_episode += 1
+                # Compute average reward per episode (not per step)
                 self.state.rl_avg_reward = (
-                    self.state.rl_total_reward / max(1, step + 1)
+                    self.state.rl_total_reward / max(1, self.state.rl_episode)
                 )
 
                 if self.config.verbose:
@@ -306,7 +307,8 @@ class UnifiedPipeline:
                     logger.error(f"Step callback error: {e}")
 
             # Logging
-            if self.config.verbose and step % self.config.log_interval == 0:
+            log_interval = max(1, self.config.log_interval)  # Prevent division by zero
+            if self.config.verbose and step % log_interval == 0:
                 logger.info(
                     f"Step {step}: reward={reward:.3f}, "
                     f"health={self.state.avg_station_health:.2f}"
@@ -424,8 +426,9 @@ class UnifiedPipeline:
 
         # Use provided action or generate one
         if action is None:
-            obs = self.rl_env._get_observation() if hasattr(self.rl_env, '_get_observation') else np.zeros(self.rl_env.obs_size)
-            action = self._select_action(obs)
+            # Use random action since we don't have current observation
+            # (observation is returned from step(), not available beforehand)
+            action = self.rl_env.action_space.sample()
 
         # Execute step
         next_obs, reward, terminated, truncated, info = self.rl_env.step(action)

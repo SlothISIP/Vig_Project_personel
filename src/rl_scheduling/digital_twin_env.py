@@ -511,8 +511,9 @@ class DigitalTwinRLEnv(gym.Env):
         obs.append(bottleneck_idx / max(1, self.num_stations))
 
         # Time ratio (progress through episode)
-        time_ratio = stats["simulation_time"] / stats["duration"]
-        obs.append(time_ratio)
+        duration = stats.get("duration", 1.0) or 1.0  # Prevent division by zero
+        time_ratio = stats["simulation_time"] / duration
+        obs.append(min(1.0, time_ratio))
 
         # Products completed (normalized)
         obs.append(min(1.0, stats["total_products_completed"] / 500.0))
