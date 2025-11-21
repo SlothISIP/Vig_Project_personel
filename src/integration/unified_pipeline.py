@@ -200,22 +200,49 @@ class UnifiedPipeline:
         """Initialize all pipeline components."""
         logger.info("Initializing unified pipeline...")
 
-        # Create production lines
+        # Create SHARED production lines (CRITICAL for closed-loop integration)
+        # These same objects are used by both RL env and feedback loop
         self.production_lines = [
             create_sample_production_line(f"Line_{i+1:02d}")
             for i in range(self.config.num_production_lines)
         ]
-        logger.info(f"Created {len(self.production_lines)} production lines")
+        logger.info(f"Created {len(self.production_lines)} SHARED production lines")
 
-        # Initialize RL environment if enabled
+        # Initialize RL environment with SHARED production lines
         if self.config.enable_rl:
-            self.rl_env = create_digital_twin_env(
-                difficulty=self.config.rl_difficulty,
+            # Import here to get the class directly (not factory function)
+            from src.rl_scheduling.digital_twin_env import DigitalTwinRLEnv, SimToRealConfig
+
+            # Configure sim-to-real based on difficulty
+            sim_configs = {
+                "easy": SimToRealConfig(
+                    processing_time_noise=0.1,
+                    defect_rate_noise=0.1,
+                    enable_domain_randomization=False,
+                ),
+                "medium": SimToRealConfig(
+                    processing_time_noise=0.2,
+                    defect_rate_noise=0.2,
+                    enable_domain_randomization=True,
+                ),
+                "hard": SimToRealConfig(
+                    processing_time_noise=0.3,
+                    defect_rate_noise=0.3,
+                    enable_domain_randomization=True,
+                    observation_noise=0.1,
+                ),
+            }
+            sim_config = sim_configs.get(self.config.rl_difficulty, sim_configs["medium"])
+
+            # Pass SHARED production lines to RL environment (CRITICAL FIX)
+            self.rl_env = DigitalTwinRLEnv(
                 num_production_lines=self.config.num_production_lines,
                 simulation_hours=self.config.simulation_hours,
                 step_duration=self.config.step_duration,
+                sim_to_real_config=sim_config,
+                external_production_lines=self.production_lines,  # SHARED!
             )
-            logger.info("RL environment initialized")
+            logger.info("RL environment initialized with SHARED production lines")
 
         # Initialize Vision AI if enabled and model provided
         if self.config.enable_vision and self.vision_model is not None:
@@ -225,17 +252,17 @@ class UnifiedPipeline:
             )
             logger.info("Vision AI explainer initialized")
 
-        # Initialize feedback loop if enabled
+        # Initialize feedback loop with SAME production lines (closed-loop)
         if self.config.enable_feedback and self.defect_explainer is not None:
             self.feedback_loop = IntegratedFeedbackLoop(
                 defect_explainer=self.defect_explainer,
-                production_lines=self.production_lines,
+                production_lines=self.production_lines,  # SAME as RL env!
                 enable_async=self.config.feedback_async,
             )
-            logger.info("Feedback loop initialized")
+            logger.info("Feedback loop initialized with SHARED production lines")
 
         self.state.mode = self.config.mode
-        logger.info("Pipeline initialization complete")
+        logger.info("Pipeline initialization complete - closed-loop integration active")
 
     def run(self, steps: int = 1000) -> PipelineState:
         """
@@ -346,40 +373,91 @@ class UnifiedPipeline:
         return self.rl_env.action_space.sample()
 
     def _simulate_vision_inspection(self) -> None:
-        """Simulate a vision inspection event."""
-        if self.feedback_loop is None:
-            # Without vision model, simulate with random defects
-            self.state.products_inspected += 1
-            if np.random.random() < 0.05:  # 5% defect rate
-                self.state.defects_detected += 1
+        """
+        Simulate vision inspection on REAL products from the simulator.
+
+        This inspects actual completed/defective products from the Digital Twin,
+        not synthetic products, ensuring the feedback loop affects real simulation state.
+        """
+        if self.rl_env is None:
             return
 
-        # Generate synthetic inspection data
-        product_id = f"P{self.state.products_inspected:06d}"
+        # Get REAL products from the simulator's production lines
+        products_to_inspect = []
 
-        # Create dummy image tensor (would be real camera image in production)
-        dummy_image = torch.randn(1, 3, 224, 224)
+        for line in self.production_lines:
+            # Inspect recently completed products
+            for product in line.completed_products[-5:]:  # Last 5 completed
+                if not hasattr(product, '_inspected'):
+                    products_to_inspect.append((product, line, "completed"))
+                    product._inspected = True
 
-        try:
-            explanation, results = self.feedback_loop.process_inspection(
-                product_id=product_id,
-                image=dummy_image,
-            )
+            # Also check defective products detected by simulator
+            for product in line.defective_products[-5:]:
+                if not hasattr(product, '_inspected'):
+                    products_to_inspect.append((product, line, "defective"))
+                    product._inspected = True
 
+        # Process each real product
+        for product, line, status in products_to_inspect:
             self.state.products_inspected += 1
-            if explanation.is_defect:
-                self.state.defects_detected += 1
 
-                # Call defect callbacks
-                for callback in self._defect_callbacks:
-                    try:
-                        callback(explanation)
-                    except Exception as e:
-                        logger.error(f"Defect callback error: {e}")
+            # Determine responsible station (where defect was detected)
+            station_id = product.defect_detected_at or product.current_station
+            if station_id is None and product.visited_stations:
+                station_id = product.visited_stations[-1]  # Last visited station
 
-        except Exception as e:
-            logger.debug(f"Vision inspection simulation error: {e}")
-            self.state.products_inspected += 1
+            # If we have a vision model and feedback loop, use them
+            if self.feedback_loop is not None:
+                # Create synthetic image (in production, this would be camera capture)
+                dummy_image = torch.randn(1, 3, 224, 224)
+
+                try:
+                    explanation, results = self.feedback_loop.process_inspection(
+                        product_id=product.product_id,
+                        image=dummy_image,
+                    )
+
+                    if explanation.is_defect:
+                        self.state.defects_detected += 1
+
+                        # Call defect callbacks
+                        for callback in self._defect_callbacks:
+                            try:
+                                callback(explanation)
+                            except Exception as e:
+                                logger.error(f"Defect callback error: {e}")
+
+                except Exception as e:
+                    logger.debug(f"Vision inspection error for {product.product_id}: {e}")
+                    # Fall back to simulator's defect detection
+                    if status == "defective" or product.is_defective:
+                        self.state.defects_detected += 1
+            else:
+                # No vision model - use simulator's defect status directly
+                if status == "defective" or product.is_defective:
+                    self.state.defects_detected += 1
+
+                    # Still update feedback controller directly if available
+                    if hasattr(self, 'feedback_loop') and self.feedback_loop is not None:
+                        from src.integration.feedback_loop import DefectFeedback
+                        from src.vision.explainability.defect_explainer import (
+                            DefectType, DefectSeverity
+                        )
+                        from datetime import datetime
+
+                        feedback = DefectFeedback(
+                            timestamp=datetime.now(),
+                            product_id=product.product_id,
+                            station_id=station_id or "unknown",
+                            is_defect=True,
+                            defect_probability=0.9,
+                            defect_type=DefectType.UNKNOWN,
+                            severity=DefectSeverity.MODERATE,
+                            affected_area=5.0,
+                            root_causes=[],
+                        )
+                        self.feedback_loop.controller.process_feedback(feedback)
 
         # Update defect rate
         if self.state.products_inspected > 0:

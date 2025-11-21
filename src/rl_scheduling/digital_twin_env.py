@@ -100,6 +100,7 @@ class DigitalTwinRLEnv(gym.Env):
         use_hierarchical_actions: bool = True,
         reward_weights: Optional[Dict[str, float]] = None,
         seed: Optional[int] = None,
+        external_production_lines: Optional[List[ProductionLine]] = None,
     ):
         """
         Initialize Digital Twin RL Environment.
@@ -112,6 +113,8 @@ class DigitalTwinRLEnv(gym.Env):
             use_hierarchical_actions: Use hierarchical action space
             reward_weights: Custom reward component weights
             seed: Random seed for reproducibility
+            external_production_lines: External production lines to use (for integration)
+                                       If provided, enables closed-loop with feedback systems
         """
         super().__init__()
 
@@ -120,6 +123,7 @@ class DigitalTwinRLEnv(gym.Env):
         self.step_duration = step_duration
         self.sim_to_real = sim_to_real_config or SimToRealConfig()
         self.use_hierarchical_actions = use_hierarchical_actions
+        self._external_lines = external_production_lines  # Store for reset()
 
         # Reward weights
         self.reward_weights = reward_weights or {
@@ -132,9 +136,13 @@ class DigitalTwinRLEnv(gym.Env):
 
         self.rng = np.random.default_rng(seed)
 
-        # Create production lines
-        self.production_lines: List[ProductionLine] = []
-        self._create_production_lines()
+        # Create or use external production lines (CRITICAL for integration)
+        if external_production_lines is not None:
+            self.production_lines = external_production_lines
+            self.num_lines = len(external_production_lines)
+        else:
+            self.production_lines: List[ProductionLine] = []
+            self._create_production_lines()
 
         # Calculate observation and action space dimensions
         self.num_stations = sum(
@@ -232,6 +240,41 @@ class DigitalTwinRLEnv(gym.Env):
             station.defect_rate *= defect_noise
             station.defect_rate = min(0.2, max(0.001, station.defect_rate))
 
+    def _reset_production_lines_state(self) -> None:
+        """
+        Reset production line state without replacing the objects.
+
+        This is CRITICAL for integration - external production lines are shared
+        with the feedback loop. We reset state but keep object references intact
+        so feedback updates continue to affect this environment.
+        """
+        for line in self.production_lines:
+            # Clear product tracking
+            line.products.clear()
+            line.completed_products.clear()
+            line.defective_products.clear()
+
+            # Reset station state
+            for station in line.stations.values():
+                # Reset machine state but preserve degradation from feedback
+                # Only reset counters, not health_score (feedback manages health)
+                station.total_processed = 0
+                station.total_defects = 0
+                station.downtime_events = 0
+                station.products_in_process.clear()
+
+                # Clear buffer
+                while not station.buffer.empty():
+                    try:
+                        station.buffer.get_nowait()
+                    except Exception:
+                        break
+
+                # Reset sensors
+                station.sensor_network.reset_all()
+
+        logger.debug("Production lines state reset (objects preserved for integration)")
+
     def _create_simulator(self) -> FactorySimulator:
         """Create and configure the factory simulator."""
         # Apply arrival rate randomization
@@ -271,10 +314,15 @@ class DigitalTwinRLEnv(gym.Env):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
-        # Recreate production lines (with fresh domain randomization)
-        self._create_production_lines()
+        # Only recreate production lines if NOT using external lines
+        # External lines are shared with feedback loop - don't replace them!
+        if self._external_lines is None:
+            self._create_production_lines()
+        else:
+            # Reset external lines state but keep the same objects (CRITICAL for integration)
+            self._reset_production_lines_state()
 
-        # Create fresh simulator
+        # Create fresh simulator using current production_lines
         self.simulator = self._create_simulator()
 
         # Initialize tracking
