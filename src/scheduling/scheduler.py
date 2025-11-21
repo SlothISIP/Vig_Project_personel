@@ -152,21 +152,34 @@ class ProductionScheduler:
         schedules = []
 
         for schedule in self.schedule_history:
+            # Get unique machine IDs from assignments
+            machine_ids = list(set(a.machine_id for a in schedule.assignments))
+
+            # Extract unique job IDs from assignments
+            job_ids = list(set(a.job_id for a in schedule.assignments))
+
             schedule_dict = {
                 "schedule_id": schedule.schedule_id,
                 "created_at": schedule.created_at.isoformat(),
-                "makespan": schedule.makespan,
-                "utilization": schedule.utilization if hasattr(schedule, 'utilization') else 0.0,
+                "makespan_minutes": schedule.get_makespan(),
+                "objective_value": schedule.objective_value,
+                "solver_time_seconds": schedule.solver_time_seconds,
+                "utilization": schedule.get_average_utilization(machine_ids) if machine_ids else 0.0,
                 "jobs": [
                     {
-                        "job_id": job.job_id,
-                        "priority": job.priority,
-                        "duration": job.duration if hasattr(job, 'duration') else 0,
-                        "deadline": job.deadline.isoformat() if hasattr(job, 'deadline') and job.deadline else None,
-                        "status": getattr(job, 'status', 'pending'),
-                        "is_overdue": getattr(job, 'is_overdue', False),
+                        "job_id": job_id,
+                        "status": "scheduled",
+                        "assignments": [
+                            {
+                                "task_id": a.task_id,
+                                "machine_id": a.machine_id,
+                                "start_time": a.start_time.isoformat(),
+                                "end_time": a.end_time.isoformat(),
+                            }
+                            for a in schedule.assignments if a.job_id == job_id
+                        ]
                     }
-                    for job in schedule.jobs
+                    for job_id in job_ids
                 ],
                 "assignments": [
                     {
