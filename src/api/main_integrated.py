@@ -206,13 +206,11 @@ async def startup_event():
 
     # 3. Factory Simulator
     try:
-        config = SimulationConfig(
-            num_machines=3,
-            num_production_lines=1,
-            simulation_duration=1000.0,
-            product_arrival_rate=10.0,
+        from src.digital_twin.simulation.simulator import create_factory_simulator
+        factory_simulator = create_factory_simulator(
+            num_lines=1,
+            simulation_hours=1000.0 / 3600  # Convert seconds to hours
         )
-        factory_simulator = FactorySimulator(config)
         logger.info("✓ Factory Simulator initialized")
     except Exception as e:
         logger.error(f"Failed to initialize simulator: {e}")
@@ -226,12 +224,13 @@ async def startup_event():
 
     # 5. Production Scheduler
     try:
+        from src.scheduling.models import MachineAvailability
         scheduler_machines = [
             Machine(
                 machine_id=f"M{i:03d}",
                 machine_type=f"Type_{i}",
                 capabilities=[f"op_{i}"],
-                available=True
+                availability=MachineAvailability.AVAILABLE
             )
             for i in range(1, 4)
         ]
@@ -566,12 +565,40 @@ async def get_current_schedule():
                 "schedule_id": "default",
                 "jobs": [],
                 "assignments": [],
-                "makespan": 0,
+                "makespan_minutes": 0,
                 "utilization": 0,
                 "created_at": datetime.now().isoformat(),
             }
 
-        return schedule
+        # Convert Schedule object to serializable dict
+        machine_ids = list(set(a.machine_id for a in schedule.assignments))
+        job_ids = list(set(a.job_id for a in schedule.assignments))
+
+        return {
+            "schedule_id": schedule.schedule_id,
+            "created_at": schedule.created_at.isoformat() if schedule.created_at else None,
+            "makespan_minutes": schedule.get_makespan(),
+            "objective_value": schedule.objective_value,
+            "utilization": schedule.get_average_utilization(machine_ids) if machine_ids else 0.0,
+            "jobs": [
+                {
+                    "job_id": job_id,
+                    "status": "scheduled",
+                    "task_count": len([a for a in schedule.assignments if a.job_id == job_id])
+                }
+                for job_id in job_ids
+            ],
+            "assignments": [
+                {
+                    "task_id": a.task_id,
+                    "job_id": a.job_id,
+                    "machine_id": a.machine_id,
+                    "start_time": a.start_time.isoformat() if a.start_time else None,
+                    "end_time": a.end_time.isoformat() if a.end_time else None,
+                }
+                for a in schedule.assignments
+            ],
+        }
     except Exception as e:
         logger.error(f"Error getting current schedule: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -598,30 +625,99 @@ async def create_schedule(request: Dict[str, Any]):
         raise HTTPException(status_code=503, detail="Scheduler not initialized")
 
     try:
+        from src.scheduling.models import Task, TaskStatus
+
         jobs_data = request.get("jobs", [])
 
-        # Convert dict to Job objects
+        # Convert dict to Job objects with correct field names
         jobs = []
         for job_data in jobs_data:
+            # Create tasks from operations data
+            tasks = []
+            operations = job_data.get("operations", []) or job_data.get("tasks", [])
+            for i, op in enumerate(operations):
+                if isinstance(op, dict):
+                    task = Task(
+                        task_id=op.get("task_id", f"{job_data.get('job_id')}_task_{i}"),
+                        task_type=op.get("task_type", op.get("type", "default")),
+                        duration=op.get("duration", 10),
+                        required_capability=op.get("required_capability"),
+                    )
+                    tasks.append(task)
+                elif isinstance(op, (int, float)):
+                    # Simple duration value
+                    task = Task(
+                        task_id=f"{job_data.get('job_id')}_task_{i}",
+                        task_type="default",
+                        duration=int(op),
+                    )
+                    tasks.append(task)
+
+            # Parse due_date from deadline or due_date field
+            due_date = None
+            deadline_str = job_data.get("deadline") or job_data.get("due_date")
+            if deadline_str:
+                if isinstance(deadline_str, str):
+                    try:
+                        due_date = datetime.fromisoformat(deadline_str.replace('Z', '+00:00'))
+                    except ValueError:
+                        pass
+                elif isinstance(deadline_str, datetime):
+                    due_date = deadline_str
+
             job = Job(
-                job_id=job_data.get("job_id"),
-                operations=job_data.get("operations", []),
-                priority=job_data.get("priority", 1),
-                deadline=job_data.get("deadline"),
-                duration=job_data.get("duration", 0),
+                job_id=job_data.get("job_id", f"job_{len(jobs)}"),
+                product_type=job_data.get("product_type", "default"),
+                tasks=tasks,
+                priority=job_data.get("priority", 0),
+                due_date=due_date,
+                customer=job_data.get("customer"),
+                order_quantity=job_data.get("order_quantity", 1),
             )
             jobs.append(job)
 
-        # Create schedule
-        schedule = production_scheduler.schedule_jobs(jobs)
+        # Create schedule and handle SchedulingResult properly
+        result = production_scheduler.schedule_jobs(jobs)
+
+        if not result.success:
+            raise HTTPException(status_code=422, detail=result.message)
+
+        # Convert schedule to serializable format
+        schedule_data = {
+            "success": result.success,
+            "message": result.message,
+            "metrics": result.metrics,
+            "schedule": None
+        }
+
+        if result.schedule:
+            schedule_data["schedule"] = {
+                "schedule_id": result.schedule.schedule_id,
+                "created_at": result.schedule.created_at.isoformat() if result.schedule.created_at else None,
+                "makespan_minutes": result.schedule.get_makespan(),
+                "objective_value": result.schedule.objective_value,
+                "solver_time_seconds": result.schedule.solver_time_seconds,
+                "assignments": [
+                    {
+                        "task_id": a.task_id,
+                        "job_id": a.job_id,
+                        "machine_id": a.machine_id,
+                        "start_time": a.start_time.isoformat() if a.start_time else None,
+                        "end_time": a.end_time.isoformat() if a.end_time else None,
+                    }
+                    for a in result.schedule.assignments
+                ]
+            }
 
         # Broadcast update via WebSocket
         await broadcast_update({
             "type": "schedule_update",
-            "data": schedule
+            "data": schedule_data
         })
 
-        return schedule
+        return schedule_data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating schedule: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -905,7 +1001,7 @@ async def simulate_factory_updates():
 
             if machine_state_manager and factory_simulator:
                 # Run simulation step
-                factory_simulator.run_step()
+                factory_simulator.step(duration=1.0)
 
                 # Update machine states from simulator
                 all_machines = machine_state_manager.get_all_machines()

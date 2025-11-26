@@ -83,6 +83,9 @@ class FactorySimulator:
         # Callbacks
         self._step_callbacks: List[Callable[[float], None]] = []
 
+        # Process initialization flag for step mode
+        self._processes_initialized = False
+
         logger.info(
             f"Factory simulator initialized with {len(production_lines)} production lines"
         )
@@ -145,12 +148,6 @@ class FactorySimulator:
                 continue
 
             # Simulate processing time
-            processing_time = max(
-                1.0,
-                self.env.timeout(
-                    station.processing_time_mean
-                ),  # Simplified for now
-            )
             yield self.env.timeout(station.processing_time_mean)
 
             # Complete processing
@@ -314,6 +311,33 @@ class FactorySimulator:
         # Print final statistics
         self._print_statistics()
 
+    def _initialize_processes(self) -> None:
+        """
+        Initialize SimPy processes for step-by-step simulation.
+
+        This registers all generator processes with the SimPy environment
+        so that step() can advance the simulation incrementally.
+        """
+        if self._processes_initialized:
+            return
+
+        # Start processes for each production line
+        for line in self.production_lines.values():
+            # Product generator
+            self.env.process(self._product_generator(line))
+
+            # Station processors
+            for station in line.stations.values():
+                self.env.process(self._station_processor(station, line))
+                self.env.process(self._sensor_monitor(station))
+                self.env.process(self._failure_generator(station))
+
+        # Simulation monitor
+        self.env.process(self._simulation_monitor())
+
+        self._processes_initialized = True
+        logger.debug("SimPy processes initialized for step mode")
+
     def step(self, duration: float = 1.0) -> None:
         """
         Run simulation for a single step.
@@ -325,6 +349,10 @@ class FactorySimulator:
             self.is_running = True
             self.start_time = datetime.now()
 
+        # Initialize processes on first step (CRITICAL FIX)
+        if not self._processes_initialized:
+            self._initialize_processes()
+
         self.env.run(until=self.env.now + duration)
         self.simulation_time = self.env.now
 
@@ -332,6 +360,9 @@ class FactorySimulator:
         """Reset simulation to initial state."""
         # Reset environment
         self.env = simpy.Environment()
+
+        # Reset process initialization flag (CRITICAL for step mode)
+        self._processes_initialized = False
 
         # Reset statistics
         self.simulation_time = 0.0
