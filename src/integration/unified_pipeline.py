@@ -261,6 +261,13 @@ class UnifiedPipeline:
             )
             logger.info("Feedback loop initialized with SHARED production lines")
 
+            # Register sync callback for RL environment resets
+            if self.rl_env is not None:
+                self.rl_env.register_reset_callback(
+                    self.feedback_loop.controller.sync_from_production_lines
+                )
+                logger.info("Registered feedback loop sync callback with RL env")
+
         self.state.mode = self.config.mode
         logger.info("Pipeline initialization complete - closed-loop integration active")
 
