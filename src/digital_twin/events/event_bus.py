@@ -1,6 +1,6 @@
 """Event bus for digital twin events."""
 
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 from collections import defaultdict
 import uuid
 
