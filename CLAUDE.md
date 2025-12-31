@@ -7,6 +7,13 @@
 - Never use emojis in code comments
 - Keep code clean and professional without decorative characters
 
+### No Mock Usage
+- Never use mock objects, MagicMock, or patch decorators in tests
+- Always use real implementations or proper test fixtures
+- Create actual test data instead of mocked responses
+- If external services are needed, use test containers or in-memory alternatives
+- Integration tests must use real component interactions
+
 ## Context Management
 
 ### Compact Command Usage
