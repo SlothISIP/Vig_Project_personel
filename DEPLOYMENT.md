@@ -732,28 +732,6 @@ gcloud run deploy backend \
 
 ---
 
-## CI/CD Setup
-
-### GitHub Actions
-
-Already configured in `.github/workflows/ci-cd.yaml`
-
-**Workflow**:
-1. **Test**: Run unit & integration tests
-2. **Build**: Build Docker images
-3. **Push**: Push to container registry
-4. **Deploy**: Deploy to Kubernetes/cloud
-
-**Triggering Deployment**:
-```bash
-# Deploy to production (create tag)
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
-
-# Deploy to staging (push to develop)
-git push origin develop
-```
-
 ### Manual Deployment
 
 ```bash

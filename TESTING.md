@@ -664,39 +664,6 @@ exclude_lines =
 
 ---
 
-## CI/CD Integration
-
-### GitHub Actions
-
-Tests automatically run on every push/PR via `.github/workflows/ci-cd.yaml`:
-
-```yaml
-jobs:
-  test-backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run tests
-        run: pytest tests/ -v --cov=src --cov-report=xml
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-```
-
-**Status Badge**:
-```markdown
-[![Tests](https://github.com/yourusername/Vig_Project_personel/workflows/CI/badge.svg)](https://github.com/yourusername/Vig_Project_personel/actions)
-[![Coverage](https://codecov.io/gh/yourusername/Vig_Project_personel/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/Vig_Project_personel)
-```
-
----
-
 ## Best Practices
 
 ### Test Naming

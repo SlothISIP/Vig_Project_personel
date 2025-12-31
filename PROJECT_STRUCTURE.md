@@ -416,13 +416,6 @@ digital-twin-factory/
 │       │       └── business_kpi.json
 │       └── alertmanager/
 │           └── config.yml
-│
-└── .github/
-    └── workflows/
-        ├── ci.yml
-        ├── cd.yml
-        ├── security-scan.yml
-        └── model-training.yml
 ```
 
 ---

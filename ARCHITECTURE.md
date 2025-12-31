@@ -618,48 +618,6 @@ Visualization:
 
 ---
 
-## 🔄 CI/CD Pipeline
-
-```yaml
-# .github/workflows/ci-cd.yml
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    - Run unit tests (pytest)
-    - Run integration tests
-    - Code coverage >80%
-
-  lint:
-    - black (code formatting)
-    - ruff (linting)
-    - mypy (type checking)
-
-  security:
-    - bandit (Python security)
-    - safety (dependency scan)
-    - trivy (container scan)
-
-  build:
-    - Build Docker images
-    - Tag with git SHA
-    - Push to registry
-
-  deploy-dev:
-    if: branch == 'develop'
-    - Deploy to dev environment
-    - Run smoke tests
-
-  deploy-prod:
-    if: branch == 'main' AND tag
-    - Deploy to production (blue-green)
-    - Health checks
-    - Rollback on failure
-```
-
----
-
 ## 📚 Technology Stack Summary
 
 | Layer | Technology | Justification |
