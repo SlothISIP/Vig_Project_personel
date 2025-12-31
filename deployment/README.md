@@ -457,7 +457,6 @@ kubectl rollout restart deployment/backend -n digital-twin-factory
 - [Docker 빌드 가이드](https://docs.docker.com/build/)
 - [Helm Chart 작성](https://helm.sh/docs/chart_template_guide/)
 - [Prometheus 모니터링](https://prometheus.io/docs/)
-- [GitHub Actions](https://docs.github.com/en/actions)
 
 ## 지원
 

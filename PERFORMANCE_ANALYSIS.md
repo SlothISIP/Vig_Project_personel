@@ -414,76 +414,11 @@ def cleanup_old_cache():
 **우선순위**: 🟡 HIGH
 
 
-## 6. CI/CD Pipeline - Poetry 누락 (ci-cd.yaml:36-43)
-**문제**:
-```yaml
-- name: Install dependencies
-  run: |
-    poetry install --no-root
-```
-
-**문제점**:
-- `pyproject.toml`이 없음 (프로젝트에서 확인 안됨)
-- `requirements.txt`만 존재
-- Poetry 설치는 하지만 사용할 파일이 없음
-- 파이프라인 실패 가능성
-
-**해결책** (2가지 옵션):
-
-**Option 1: requirements.txt 사용**
-```yaml
-- name: Install dependencies
-  run: |
-    pip install --upgrade pip
-    pip install -r requirements.txt
-    pip install pytest pytest-cov ruff black mypy
-
-- name: Run linting
-  run: |
-    ruff src/
-    black --check src/
-
-- name: Run tests
-  run: |
-    pytest tests/ -v --cov=src --cov-report=xml
-```
-
-**Option 2: pyproject.toml 생성 (권장)**
-```toml
-# pyproject.toml
-[tool.poetry]
-name = "digital-twin-factory"
-version = "1.0.0"
-description = "AI-powered Digital Twin Factory System"
-authors = ["Your Name <email@example.com>"]
-
-[tool.poetry.dependencies]
-python = "^3.10"
-fastapi = "^0.104.1"
-uvicorn = {extras = ["standard"], version = "^0.24.0"}
-# ... (requirements.txt 내용을 여기로 이동)
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.3"
-pytest-asyncio = "^0.21.1"
-pytest-cov = "^4.1.0"
-ruff = "^0.1.6"
-black = "^23.12.0"
-mypy = "^1.7.1"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-```
-
-**우선순위**: 🟡 HIGH
-
-
 # ==============================================================================
 # 🟢 MEDIUM PRIORITY ISSUES (중간 - 시간 있을 때 개선)
 # ==============================================================================
 
-## 7. OR-Tools CP-SAT Solver - 타임아웃 설정 부족
+## 6. OR-Tools CP-SAT Solver - 타임아웃 설정 부족
 **위치**: src/scheduling/solvers/job_shop_solver.py
 
 **잠재적 문제**:
@@ -501,7 +436,7 @@ class SolverConfig:
 **우선순위**: 🟢 MEDIUM
 
 
-## 8. 에러 핸들링 - 상세 정보 부족
+## 7. 에러 핸들링 - 상세 정보 부족
 **문제**:
 ```python
 except Exception as e:
