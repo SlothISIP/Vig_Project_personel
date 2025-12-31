@@ -92,3 +92,60 @@ Always avoid exaggeration; think and answer realistically and objectively. Alway
 3. **HIGH**: Service initialization order
 4. **HIGH**: Job status error handling
 5. **HIGH**: WebSocket race condition
+
+## Project Completion Plan
+
+**Reference Document:** `COMPLETION_PLAN.md`
+
+### Current Status
+- **Phase:** Not Started
+- **Completion Level:** ~20% toward production
+- **Estimated Remaining:** 3-4 weeks
+
+### Phase Overview
+| Phase | Description | Duration | Status |
+|-------|-------------|----------|--------|
+| **Phase 1** | Execution Readiness | 2 days | [ ] Not Started |
+| **Phase 2** | Critical Issues Fix | 3 days | [ ] Not Started |
+| **Phase 3** | Deployment Preparation | 3 days | [ ] Not Started |
+| **Phase 4** | Test Coverage | 5 days | [ ] Not Started |
+
+### Quick Start (Phase 1)
+```bash
+# 1. Create directories
+mkdir -p data/{raw,processed} models/{onnx,checkpoints} logs config
+
+# 2. Configure environment
+cp .env.example .env
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Create ONNX model
+python -c "
+from src.vision.models.swin_transformer import create_swin_tiny
+import torch
+from pathlib import Path
+Path('models/onnx').mkdir(parents=True, exist_ok=True)
+m = create_swin_tiny(num_classes=2, pretrained=True)
+m.eval()
+torch.onnx.export(m, torch.randn(1,3,224,224), 'models/onnx/swin_defect.onnx',
+    input_names=['input'], output_names=['output'],
+    dynamic_axes={'input': {0: 'batch'}, 'output': {0: 'batch'}})
+"
+
+# 5. Verify and start
+python scripts/test_setup.py
+uvicorn src.api.main_integrated:app --reload --port 8000
+```
+
+### Next Steps
+1. Complete Phase 1 to make project runnable
+2. Fix Critical issues (Phase 2) before any new features
+3. See `COMPLETION_PLAN.md` for detailed task breakdown
+
+### When Continuing Work
+1. Check current phase status in this section
+2. Read `COMPLETION_PLAN.md` for detailed tasks
+3. Use `/fix-issue` command for known issues
+4. Update status after completing each phase
