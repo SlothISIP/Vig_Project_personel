@@ -496,6 +496,28 @@ class DigitalTwinFeedbackController:
             for station_id, model in self.health_models.items()
         }
 
+    def sync_from_production_lines(self) -> None:
+        """Sync health models with actual production line state."""
+        for line in self.production_lines:
+            for station_id, station in line.stations.items():
+                if station_id in self.health_models:
+                    actual_health = station.machine_state.health_score
+                    self.health_models[station_id].current_health = actual_health
+                    logger.debug(f"Synced {station_id}: {actual_health:.3f}")
+                else:
+                    self.health_models[station_id] = StationHealthModel(
+                        station_id=station_id,
+                        base_health=station.machine_state.health_score,
+                    )
+
+    def sync_to_production_lines(self) -> None:
+        """Push health model state to production lines."""
+        for station_id, health_model in self.health_models.items():
+            for line in self.production_lines:
+                if station_id in line.stations:
+                    line.stations[station_id].machine_state.health_score = health_model.current_health
+                    break
+
 
 class IntegratedFeedbackLoop:
     """

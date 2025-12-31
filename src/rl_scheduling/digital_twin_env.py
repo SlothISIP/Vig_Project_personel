@@ -11,7 +11,7 @@ Innovation: Unlike typical RL scheduling envs that use simplified models,
 this uses the full discrete-event simulator as the environment.
 """
 
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Callable, Dict, List, Tuple, Optional, Any
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -124,6 +124,7 @@ class DigitalTwinRLEnv(gym.Env):
         self.sim_to_real = sim_to_real_config or SimToRealConfig()
         self.use_hierarchical_actions = use_hierarchical_actions
         self._external_lines = external_production_lines  # Store for reset()
+        self._on_reset_callbacks: List[Callable[[], None]] = []  # Reset callbacks
 
         # Reward weights
         self.reward_weights = reward_weights or {
@@ -138,6 +139,7 @@ class DigitalTwinRLEnv(gym.Env):
 
         # Create or use external production lines (CRITICAL for integration)
         if external_production_lines is not None:
+            self._validate_external_lines(external_production_lines, num_production_lines)
             self.production_lines = external_production_lines
             self.num_lines = len(external_production_lines)
         else:
@@ -208,6 +210,46 @@ class DigitalTwinRLEnv(gym.Env):
             f"DigitalTwinRLEnv initialized: {self.num_lines} lines, "
             f"{self.num_stations} stations, obs_size={self.obs_size}"
         )
+
+    def _validate_external_lines(
+        self,
+        lines: List[ProductionLine],
+        requested_num_lines: int,
+    ) -> None:
+        """Validate external production lines for integration."""
+        if not lines:
+            raise ValueError(
+                "external_production_lines cannot be empty. "
+                "Provide at least one ProductionLine or use None."
+            )
+
+        if len(lines) != requested_num_lines:
+            logger.warning(
+                f"num_production_lines={requested_num_lines} ignored; "
+                f"using {len(lines)} external lines"
+            )
+
+        for i, line in enumerate(lines):
+            if not hasattr(line, 'line_id'):
+                raise ValueError(f"Line at index {i} missing 'line_id'")
+
+            if not hasattr(line, 'stations') or not line.stations:
+                raise ValueError(f"Line '{getattr(line, 'line_id', i)}' has no stations")
+
+            for station_id, station in line.stations.items():
+                required_attrs = ['machine_state', 'buffer', 'station_type']
+                for attr in required_attrs:
+                    if not hasattr(station, attr):
+                        raise ValueError(f"Station '{station_id}' missing '{attr}'")
+
+                if not hasattr(station.machine_state, 'health_score'):
+                    raise ValueError(f"Station '{station_id}' missing 'health_score'")
+
+        logger.info(f"Validated {len(lines)} external production lines")
+
+    def register_reset_callback(self, callback: Callable[[], None]) -> None:
+        """Register callback to be called after environment reset."""
+        self._on_reset_callbacks.append(callback)
 
     def _create_production_lines(self) -> None:
         """Create production lines with optional domain randomization."""
@@ -340,6 +382,13 @@ class DigitalTwinRLEnv(gym.Env):
         # Get initial observation
         observation = self._get_observation()
         info = self._get_info()
+
+        # Execute reset callbacks (for state synchronization)
+        for callback in self._on_reset_callbacks:
+            try:
+                callback()
+            except Exception as e:
+                logger.warning(f"Reset callback error: {e}")
 
         logger.debug(f"Environment reset, difficulty: {self.current_difficulty:.2f}")
 

@@ -153,9 +153,10 @@ factory_simulator: Optional[FactorySimulator] = None
 predictive_system: Optional[PredictiveMaintenanceSystem] = None
 production_scheduler: Optional[ProductionScheduler] = None
 websocket_clients: List[WebSocket] = []
+websocket_lock = asyncio.Lock()  # Thread-safe access to websocket_clients
 
 # Shutdown event for graceful termination
-shutdown_event = asyncio.Event()
+shutdown_signal = asyncio.Event()
 
 # Dashboard stats cache (TTL-based)
 dashboard_cache: Dict[str, Any] = {}
@@ -239,11 +240,18 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize scheduler: {e}")
 
-    logger.info("✅ All services initialized successfully")
+    logger.info("All services initialized successfully")
 
-    # 6. Start background tasks
+    # 6. Store shared state in app.state for cross-service access
+    app.state.machine_state_manager = machine_state_manager
+    app.state.factory_simulator = factory_simulator
+    app.state.production_scheduler = production_scheduler
+    if factory_simulator:
+        app.state.production_lines = factory_simulator.production_lines
+
+    # 7. Start background tasks
     asyncio.create_task(simulate_factory_updates())
-    logger.info("✓ Background tasks started")
+    logger.info("Background tasks started")
 
 
 @app.on_event("shutdown")
@@ -252,8 +260,8 @@ async def shutdown_event():
     logger.info("👋 Shutting down Digital Twin Factory System...")
 
     # 1. Signal background tasks to stop
-    shutdown_event.set()
-    logger.info("✓ Shutdown signal sent to background tasks")
+    shutdown_signal.set()
+    logger.info("Shutdown signal sent to background tasks")
 
     # 2. Wait a bit for tasks to finish
     await asyncio.sleep(1)
@@ -730,11 +738,19 @@ async def get_job_status(job_id: str):
         raise HTTPException(status_code=503, detail="Scheduler not initialized")
 
     try:
-        job = production_scheduler.get_job_status(job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        result = production_scheduler.get_job_status(job_id)
 
-        return job
+        # Check for error in response (get_job_status returns dict with "error" key on failure)
+        if isinstance(result, dict) and "error" in result:
+            error_msg = result["error"]
+            if "not found" in error_msg.lower():
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+            elif "no schedule" in error_msg.lower():
+                raise HTTPException(status_code=404, detail="No schedule available")
+            else:
+                raise HTTPException(status_code=400, detail=error_msg)
+
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -907,29 +923,39 @@ async def safe_send(ws: WebSocket, message: dict):
 
 
 async def broadcast_update(message: dict):
-    """Broadcast update to all connected WebSocket clients (parallel)."""
+    """Broadcast update to all WebSocket clients (thread-safe)."""
     global websocket_clients
 
-    if not websocket_clients:
-        return
+    async with websocket_lock:
+        if not websocket_clients:
+            return
+        clients_snapshot = websocket_clients.copy()
 
-    # Parallel broadcast using asyncio.gather
-    tasks = [safe_send(ws, message) for ws in websocket_clients]
+    tasks = [safe_send(ws, message) for ws in clients_snapshot]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Filter out disconnected clients (O(N) operation)
-    websocket_clients = [
-        ws for ws, result in zip(websocket_clients, results)
-        if not isinstance(result, Exception)
-    ]
+    failed_clients = {
+        ws for ws, result in zip(clients_snapshot, results)
+        if isinstance(result, Exception)
+    }
+
+    if failed_clients:
+        async with websocket_lock:
+            websocket_clients = [
+                ws for ws in websocket_clients
+                if ws not in failed_clients
+            ]
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time updates."""
     await websocket.accept()
-    websocket_clients.append(websocket)
-    logger.info(f"WebSocket client connected. Total clients: {len(websocket_clients)}")
+
+    async with websocket_lock:
+        websocket_clients.append(websocket)
+        client_count = len(websocket_clients)
+    logger.info(f"WebSocket client connected. Total clients: {client_count}")
 
     try:
         # Send initial state
@@ -974,9 +1000,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 break
 
     finally:
-        if websocket in websocket_clients:
-            websocket_clients.remove(websocket)
-        logger.info(f"WebSocket client disconnected. Total clients: {len(websocket_clients)}")
+        async with websocket_lock:
+            if websocket in websocket_clients:
+                websocket_clients.remove(websocket)
+            client_count = len(websocket_clients)
+        logger.info(f"WebSocket client disconnected. Total clients: {client_count}")
 
 
 # ============================================================================
@@ -992,7 +1020,7 @@ async def simulate_factory_updates():
     error_count = 0
     MAX_ERRORS = 10
 
-    while not shutdown_event.is_set():
+    while not shutdown_signal.is_set():
         try:
             # Skip simulation if no clients connected (resource optimization)
             if not websocket_clients:
